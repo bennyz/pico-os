@@ -19,6 +19,8 @@ heapless = "0.8.0"
 usb-device = { version = "0.3.2", features = ["defmt"] }
 usbd-serial = "0.2.2"
 cortex-m = "0.7.7"
+rp2040-flash = "0.5.1"
+numtoa = "0.2.4"
 
 [features]
 # This is the set of features we enable by default

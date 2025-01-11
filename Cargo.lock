@@ -300,6 +300,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "numtoa"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6aa2c4e539b869820a2b82e1aef6ff40aa85e65decdd5185e83fb4b1249cd00f"
+
+[[package]]
 name = "panic-halt"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -319,9 +325,11 @@ dependencies = [
  "cortex-m-rt",
  "fugit",
  "heapless",
+ "numtoa",
  "panic-halt",
  "rp-pico",
  "rp2040-boot2",
+ "rp2040-flash",
  "rp2040-hal 0.11.0",
  "usb-device",
  "usbd-serial",
@@ -425,6 +433,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c92f344f63f950ee36cf4080050e4dce850839b9175da38f9d2ffb69b4dbb21"
 dependencies = [
  "crc-any",
+]
+
+[[package]]
+name = "rp2040-flash"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e41f3c56e59be77dba9b64f06f8b6944e51b241bf750595525fb1b33ba84180"
+dependencies = [
+ "rp2040-hal 0.10.2",
 ]
 
 [[package]]
