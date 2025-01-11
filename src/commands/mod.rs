@@ -1,46 +1,36 @@
 mod handlers;
 use handlers::*;
 
+use crate::context::{self, Context};
+
+use core::fmt::Write;
+use heapless::String;
 use heapless::Vec;
 use rp_pico::hal;
 use usbd_serial::SerialPort;
 
-pub static COMMANDS: &[Command] = &[
-    Command {
-        name: "write",
-        help: "Write text to slot n: write <n> <text>",
-        handler: handle_write,
-    },
-    Command {
-        name: "read",
-        help: "Read text from slot n: read <n>",
-        handler: handle_read,
-    },
-    Command {
-        name: "slots",
-        help: "List available storage slots",
-        handler: handle_slots,
-    },
-    Command {
-        name: "help",
-        help: "Show available commands",
-        handler: handle_help,
-    },
-    Command {
-        name: "reboot",
-        help: "Restart the device",
-        handler: handle_reboot,
-    },
-    Command {
-        name: "bootloader",
-        help: "Enter USB bootloader mode",
-        handler: handle_bootloader,
-    },
-    Command {
-        name: "buffer",
-        help: "Print HELP_BUFFER_SIZE",
-        handler: handle_buffer,
-    },
+#[derive(Debug)]
+pub enum CommandArgs {
+    None(()),
+    Slot(usize),
+    WriteSlot(usize, String<64>),
+}
+
+pub trait Command: Send + Sync {
+    type Args;
+    fn name(&self) -> &'static str;
+    fn help(&self) -> &'static str;
+    fn parse(&self, args: &[&str]) -> Result<Self::Args, &'static str>;
+    fn execute(&self, args: Self::Args, context: &Context) -> CommandResult;
+}
+
+pub static COMMANDS: &[&dyn Command<Args = CommandArgs>] = &[
+    &WriteCommand,
+    &ReadCommand,
+    &SlotsCommand,
+    &HelpCommand,
+    &RebootCommand,
+    &BootloaderCommand,
 ];
 
 pub enum CommandResult {
@@ -48,22 +38,16 @@ pub enum CommandResult {
     Error(&'static str),
 }
 
-pub struct Command {
-    pub name: &'static str,
-    pub help: &'static str,
-    pub handler: fn(&mut SerialPort<hal::usb::UsbBus>, &[&str]) -> CommandResult,
-}
-
 pub struct CommandRegistry {
-    commands: &'static [Command],
+    commands: &'static [&'static dyn Command<Args = CommandArgs>],
 }
 
 impl CommandRegistry {
-    pub const fn new(commands: &'static [Command]) -> Self {
+    pub const fn new(commands: &'static [&'static dyn Command<Args = CommandArgs>]) -> Self {
         Self { commands }
     }
 
-    pub fn execute(&self, serial: &mut SerialPort<hal::usb::UsbBus>, line: &str) -> CommandResult {
+    pub fn execute(&self, line: &str) -> CommandResult {
         let mut parts: Vec<&str, 8> = Vec::new();
         for part in line.split(' ') {
             if parts.push(part).is_err() {
@@ -76,9 +60,12 @@ impl CommandRegistry {
             None => return CommandResult::Error("Empty command"),
         };
 
-        for cmd in self.commands {
-            if cmd.name == command_name {
-                return (cmd.handler)(serial, &parts[1..]);
+        for &cmd in self.commands {
+            if cmd.name() == command_name {
+                return context::with_context(|ctx| match cmd.parse(&parts[1..]) {
+                    Ok(args) => cmd.execute(args, ctx),
+                    Err(e) => CommandResult::Error(e),
+                });
             }
         }
 

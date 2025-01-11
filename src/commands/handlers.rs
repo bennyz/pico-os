@@ -1,42 +1,229 @@
+use super::{Command, CommandArgs};
 use crate::commands::{CommandResult, COMMANDS};
+use crate::context::Context;
 use crate::flash;
 use core::fmt::Write;
+use fugit::MicrosDurationU32;
+use hal::rom_data::reset_to_usb_boot;
+use heapless::String;
 use rp_pico::hal;
-use usbd_serial::SerialPort;
 
-pub fn handle_buffer(serial: &mut SerialPort<hal::usb::UsbBus>, args: &[&str]) -> CommandResult {
-    CommandResult::Ok(Some(b"Buffer size\r\n"))
-}
+pub struct WriteCommand;
+pub struct ReadCommand;
+pub struct SlotsCommand;
+pub struct HelpCommand;
+pub struct RebootCommand;
+pub struct BootloaderCommand;
 
-pub fn handle_reboot(serial: &mut SerialPort<hal::usb::UsbBus>, args: &[&str]) -> CommandResult {
-    CommandResult::Ok(Some(b"Rebooting...\r\n"))
-}
+impl Command for HelpCommand {
+    type Args = CommandArgs;
 
-pub fn handle_bootloader(
-    serial: &mut SerialPort<hal::usb::UsbBus>,
-    args: &[&str],
-) -> CommandResult {
-    CommandResult::Ok(Some(b"Rebooting into bootloader mode...\r\n"))
-}
-
-pub fn handle_help(serial: &mut SerialPort<hal::usb::UsbBus>, _args: &[&str]) -> CommandResult {
-    let _ = serial.write(b"\r\nAvailable commands:\r\n");
-
-    for cmd in COMMANDS {
-        let _ = serial.write(b"  ");
-        let _ = serial.write(cmd.name.as_bytes());
-
-        let padding = 12_usize.saturating_sub(cmd.name.len());
-        for _ in 0..padding {
-            let _ = serial.write(b" ");
-        }
-
-        let _ = serial.write(b" - ");
-        let _ = serial.write(cmd.help.as_bytes());
-        let _ = serial.write(b"\r\n");
+    fn name(&self) -> &'static str {
+        "help"
+    }
+    fn help(&self) -> &'static str {
+        "Show this help message"
     }
 
-    CommandResult::Ok(None)
+    fn parse(&self, args: &[&str]) -> Result<Self::Args, &'static str> {
+        if !args.is_empty() {
+            return Err("help command takes no arguments");
+        }
+        Ok(CommandArgs::None(()))
+    }
+
+    fn execute(&self, _: Self::Args, context: &Context) -> CommandResult {
+        let mut serial = context.serial.borrow_mut();
+
+        for cmd in COMMANDS {
+            let _ = serial.write(b"  ");
+            let _ = serial.write(cmd.name().as_bytes());
+
+            let padding = 12_usize.saturating_sub(cmd.name().len());
+            for _ in 0..padding {
+                let _ = serial.write(b" ");
+            }
+
+            let _ = serial.write(b" - ");
+            let _ = serial.write(cmd.help().as_bytes());
+            let _ = serial.write(b"\r\n");
+        }
+
+        CommandResult::Ok(None)
+    }
+}
+
+impl Command for RebootCommand {
+    type Args = CommandArgs;
+
+    fn name(&self) -> &'static str {
+        "reboot"
+    }
+    fn help(&self) -> &'static str {
+        "Reboot the device into App mode"
+    }
+
+    fn parse(&self, args: &[&str]) -> Result<Self::Args, &'static str> {
+        if !args.is_empty() {
+            return Err("reboot command takes no arguments");
+        }
+        Ok(CommandArgs::None(()))
+    }
+
+    fn execute(&self, _: Self::Args, context: &Context) -> CommandResult {
+        context
+            .watchdog
+            .borrow_mut()
+            .start(MicrosDurationU32::millis(1));
+        loop {}
+    }
+}
+
+impl Command for BootloaderCommand {
+    type Args = CommandArgs;
+
+    fn name(&self) -> &'static str {
+        "bootloader"
+    }
+    fn help(&self) -> &'static str {
+        "Reboot the device into Bootloader mode"
+    }
+
+    fn parse(&self, args: &[&str]) -> Result<Self::Args, &'static str> {
+        if !args.is_empty() {
+            return Err("bootloader command takes no arguments");
+        }
+        Ok(CommandArgs::None(()))
+    }
+
+    fn execute(&self, _: Self::Args, _context: &Context) -> CommandResult {
+        reset_to_usb_boot(0, 0);
+        CommandResult::Ok(None)
+    }
+}
+
+impl Command for ReadCommand {
+    type Args = CommandArgs;
+
+    fn name(&self) -> &'static str {
+        "read"
+    }
+    fn help(&self) -> &'static str {
+        "Read text from slot n: read <n>"
+    }
+
+    fn parse(&self, args: &[&str]) -> Result<Self::Args, &'static str> {
+        if args.len() != 1 {
+            return Err("Usage: read <slot>");
+        }
+
+        let slot = args[0]
+            .parse::<usize>()
+            .map_err(|_| "Invalid slot number")?;
+
+        if slot > flash::FLASH_SLOTS.len() {
+            return Err("Invalid slot number");
+        }
+
+        Ok(CommandArgs::Slot(slot))
+    }
+
+    fn execute(&self, args: Self::Args, _context: &Context) -> CommandResult {
+        let slot = match args {
+            CommandArgs::Slot(slot) => slot,
+            _ => return CommandResult::Error("Invalid arguments"),
+        };
+        match flash::read_from_flash(slot) {
+            Ok(data) => {
+                unsafe {
+                    write_to_buffer(&mut SLOTS_BUFFER, |writer| {
+                        let _ = writer.write_str("\r\n");
+                        let text = core::str::from_utf8(data).unwrap_or("<invalid utf8>");
+                        let _ = writer.write_str(text);
+                    })
+                };
+                CommandResult::Ok(Some(unsafe { &SLOTS_BUFFER[..] }))
+            }
+            Err(e) => CommandResult::Error(e),
+        }
+    }
+}
+
+impl Command for WriteCommand {
+    type Args = CommandArgs;
+
+    fn name(&self) -> &'static str {
+        "write"
+    }
+    fn help(&self) -> &'static str {
+        "Write text to slot n: write <n> <text>"
+    }
+
+    fn parse(&self, args: &[&str]) -> Result<Self::Args, &'static str> {
+        if args.len() < 2 {
+            return Err("Usage: write <slot> <text>");
+        }
+
+        let slot = args[0]
+            .parse::<usize>()
+            .map_err(|_| "Invalid slot number")?;
+
+        if slot > flash::FLASH_SLOTS.len() {
+            return Err("Invalid slot number");
+        }
+
+        // Convert to a heapless String
+        let mut data = String::<64>::new();
+        for (i, part) in args.iter().skip(1).enumerate() {
+            if i > 0 {
+                let _ = data.write_str(" ");
+            }
+            let _ = data.write_str(part);
+        }
+
+        Ok(CommandArgs::WriteSlot(slot, data))
+    }
+
+    fn execute(&self, args: Self::Args, _context: &Context) -> CommandResult {
+        let (slot, data) = match args {
+            CommandArgs::WriteSlot(slot, data) => (slot, data),
+            _ => return CommandResult::Error("Invalid arguments"),
+        };
+        match flash::write_to_flash(slot, data.as_bytes()) {
+            Ok(_) => CommandResult::Ok(None),
+            Err(e) => CommandResult::Error(e),
+        }
+    }
+}
+
+impl Command for SlotsCommand {
+    type Args = CommandArgs;
+
+    fn name(&self) -> &'static str {
+        "slots"
+    }
+    fn help(&self) -> &'static str {
+        "List available storage slots"
+    }
+
+    fn parse(&self, args: &[&str]) -> Result<Self::Args, &'static str> {
+        if !args.is_empty() {
+            return Err("slots command takes no arguments");
+        }
+        Ok(CommandArgs::None(()))
+    }
+
+    fn execute(&self, _: Self::Args, _: &Context) -> CommandResult {
+        let output = unsafe {
+            write_to_buffer(&mut SLOTS_BUFFER, |writer| {
+                for (i, (_, name)) in flash::FLASH_SLOTS.iter().enumerate() {
+                    let _ = write!(writer, "  {}: {}\r\n", i + 1, name);
+                }
+            })
+        };
+
+        CommandResult::Ok(Some(output))
+    }
 }
 
 static mut WRITE_BUFFER: [u8; 256] = [0; 256];
@@ -84,66 +271,4 @@ fn write_to_buffer(buffer: &'static mut [u8], f: impl FnOnce(&mut ByteWriter)) -
     drop(writer);
 
     &buffer[..position]
-}
-
-pub fn handle_write(serial: &mut SerialPort<hal::usb::UsbBus>, args: &[&str]) -> CommandResult {
-    if args.len() < 2 {
-        return CommandResult::Error("Usage: write <slot> <text>");
-    }
-
-    match args[0].parse::<usize>() {
-        Ok(slot) => {
-            let text = unsafe {
-                write_to_buffer(&mut WRITE_BUFFER, |writer| {
-                    for (i, &arg) in args[1..].iter().enumerate() {
-                        if i > 0 {
-                            let _ = writer.write_str(" ");
-                        }
-                        let _ = writer.write_str(arg);
-                    }
-                })
-            };
-
-            match flash::write_to_flash(slot - 1, text) {
-                Ok(_) => CommandResult::Ok(None),
-                Err(e) => CommandResult::Error(e),
-            }
-        }
-        Err(_) => CommandResult::Error("Invalid slot number"),
-    }
-}
-
-pub fn handle_read(serial: &mut SerialPort<hal::usb::UsbBus>, args: &[&str]) -> CommandResult {
-    if args.len() != 1 {
-        return CommandResult::Error("Usage: read <slot>");
-    }
-
-    match args[0].parse::<usize>() {
-        Ok(slot) => match flash::read_from_flash(slot - 1) {
-            Ok(data) => {
-                unsafe {
-                    write_to_buffer(&mut SLOTS_BUFFER, |writer| {
-                        let _ = writer.write_str("\r\n");
-                        let text = core::str::from_utf8(data).unwrap_or("<invalid utf8>");
-                        let _ = writer.write_str(text);
-                    })
-                };
-                CommandResult::Ok(Some(unsafe { &SLOTS_BUFFER[..] }))
-            }
-            Err(e) => CommandResult::Error(e),
-        },
-        Err(_) => CommandResult::Error("Invalid slot number"),
-    }
-}
-
-pub fn handle_slots(serial: &mut SerialPort<hal::usb::UsbBus>, args: &[&str]) -> CommandResult {
-    let output = unsafe {
-        write_to_buffer(&mut SLOTS_BUFFER, |writer| {
-            for (i, (_, name)) in flash::FLASH_SLOTS.iter().enumerate() {
-                let _ = write!(writer, "  {}: {}\r\n", i + 1, name);
-            }
-        })
-    };
-
-    CommandResult::Ok(Some(output))
 }

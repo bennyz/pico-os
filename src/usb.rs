@@ -18,7 +18,6 @@ static mut USB_BUS: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
 
 impl UsbSerial {
     pub fn new(usb_bus: UsbBusAllocator<hal::usb::UsbBus>) -> Self {
-        // SAFETY: This is safe as we only call this once during initialization
         unsafe {
             USB_BUS = Some(usb_bus);
             let bus_ref = USB_BUS.as_ref().unwrap();
@@ -41,6 +40,12 @@ impl UsbSerial {
         }
     }
 
+    pub fn take_serial(&mut self) -> SerialPort<'static, hal::usb::UsbBus> {
+        core::mem::replace(&mut self.serial, unsafe {
+            core::mem::MaybeUninit::uninit().assume_init()
+        })
+    }
+
     pub fn init(&mut self) {
         let _ = self.serial.write(b"\r\n=== USB Serial Example ===\r\n");
         let _ = self
@@ -48,22 +53,22 @@ impl UsbSerial {
             .write(b"Type 'help' for available commands.\r\n> ");
     }
 
-    pub fn poll(&mut self, registry: &CommandRegistry, watchdog: &mut Watchdog) {
+    pub fn poll(&mut self, registry: &CommandRegistry) {
         if self.device.poll(&mut [&mut self.serial]) {
             let mut buf = [0u8; 64];
             match self.serial.read(&mut buf) {
                 Ok(count) if count > 0 => {
-                    self.handle_input(&buf[..count], registry, watchdog);
+                    self.handle_input(&buf[..count], registry);
                 }
                 _ => {}
             }
         }
     }
 
-    fn handle_input(&mut self, input: &[u8], registry: &CommandRegistry, watchdog: &mut Watchdog) {
+    fn handle_input(&mut self, input: &[u8], registry: &CommandRegistry) {
         for &b in input {
             match b {
-                b'\r' | b'\n' => self.handle_line(registry, watchdog),
+                b'\r' | b'\n' => self.handle_line(registry),
                 8 | 127 => self.handle_backspace(),
                 b if (32..127).contains(&b) => self.handle_char(b),
                 _ => {}
@@ -71,21 +76,12 @@ impl UsbSerial {
         }
     }
 
-    fn handle_line(&mut self, registry: &CommandRegistry, watchdog: &mut Watchdog) {
+    fn handle_line(&mut self, registry: &CommandRegistry) {
         if !self.line_buffer.is_empty() {
-            match registry.execute(&mut self.serial, &self.line_buffer) {
+            match registry.execute(&self.line_buffer) {
                 CommandResult::Ok(Some(data)) => {
                     let _ = self.serial.write(b"\r\n");
                     let _ = self.serial.write(data);
-
-                    match self.line_buffer.as_str() {
-                        "reboot" => {
-                            watchdog.start(MicrosDurationU32::millis(1));
-                            loop {}
-                        }
-                        "bootloader" => reset_to_usb_boot(0, 0),
-                        _ => {}
-                    }
                 }
                 CommandResult::Ok(None) => {
                     let _ = self.serial.write(b"\r\nOK");

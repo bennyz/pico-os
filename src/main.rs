@@ -2,21 +2,30 @@
 #![no_main]
 
 mod commands;
+mod context;
 mod flash;
 mod usb;
 
 use crate::commands::CommandRegistry;
 
+use cortex_m::asm::delay;
 use panic_halt as _;
-use rp_pico::hal::pac;
+use rp_pico::hal::{pac, Watchdog};
 use rp_pico::{entry, hal};
 use usb::UsbSerial;
 use usb_device::class_prelude::UsbBusAllocator;
 
+use context::{init as init_context, with_context};
+
 #[entry]
 fn main() -> ! {
     let mut pac = pac::Peripherals::take().unwrap();
-    let mut watchdog = hal::Watchdog::new(pac.WATCHDOG);
+    static mut WATCHDOG: Option<Watchdog> = None;
+    let watchdog = unsafe {
+        WATCHDOG = Some(hal::Watchdog::new(pac.WATCHDOG));
+        // Get a mutable reference to the watchdog
+        WATCHDOG.as_mut().unwrap()
+    };
 
     let clocks = hal::clocks::init_clocks_and_plls(
         rp_pico::XOSC_CRYSTAL_FREQ,
@@ -25,7 +34,7 @@ fn main() -> ! {
         pac.PLL_SYS,
         pac.PLL_USB,
         &mut pac.RESETS,
-        &mut watchdog,
+        watchdog,
     )
     .ok()
     .unwrap();
@@ -41,9 +50,10 @@ fn main() -> ! {
     let mut usb = UsbSerial::new(usb_bus);
     let registry = CommandRegistry::new(commands::COMMANDS);
 
+    init_context(usb.take_serial(), watchdog);
     usb.init();
 
     loop {
-        usb.poll(&registry, &mut watchdog);
+        usb.poll(&registry);
     }
 }
