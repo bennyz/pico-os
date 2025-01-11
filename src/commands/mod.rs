@@ -3,7 +3,6 @@ use handlers::*;
 
 use crate::context::{self, Context};
 
-use core::fmt::Write;
 use heapless::String;
 use heapless::Vec;
 use rp_pico::hal;
@@ -21,7 +20,12 @@ pub trait Command: Send + Sync {
     fn name(&self) -> &'static str;
     fn help(&self) -> &'static str;
     fn parse(&self, args: &[&str]) -> Result<Self::Args, &'static str>;
-    fn execute(&self, args: Self::Args, context: &Context) -> CommandResult;
+    fn execute(
+        &self,
+        args: Self::Args,
+        context: &Context,
+        serial: &mut SerialPort<'static, hal::usb::UsbBus>,
+    ) -> CommandResult;
 }
 
 pub static COMMANDS: &[&dyn Command<Args = CommandArgs>] = &[
@@ -47,7 +51,11 @@ impl CommandRegistry {
         Self { commands }
     }
 
-    pub fn execute(&self, line: &str) -> CommandResult {
+    pub fn execute(
+        &self,
+        line: &str,
+        serial: &mut SerialPort<'static, hal::usb::UsbBus>,
+    ) -> CommandResult {
         let mut parts: Vec<&str, 8> = Vec::new();
         for part in line.split(' ') {
             if parts.push(part).is_err() {
@@ -63,7 +71,7 @@ impl CommandRegistry {
         for &cmd in self.commands {
             if cmd.name() == command_name {
                 return context::with_context(|ctx| match cmd.parse(&parts[1..]) {
-                    Ok(args) => cmd.execute(args, ctx),
+                    Ok(args) => cmd.execute(args, ctx, serial),
                     Err(e) => CommandResult::Error(e),
                 });
             }

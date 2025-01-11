@@ -15,7 +15,7 @@ use rp_pico::{entry, hal};
 use usb::UsbSerial;
 use usb_device::class_prelude::UsbBusAllocator;
 
-use context::{init as init_context, with_context};
+use context::init as init_context;
 
 #[entry]
 fn main() -> ! {
@@ -23,7 +23,6 @@ fn main() -> ! {
     static mut WATCHDOG: Option<Watchdog> = None;
     let watchdog = unsafe {
         WATCHDOG = Some(hal::Watchdog::new(pac.WATCHDOG));
-        // Get a mutable reference to the watchdog
         WATCHDOG.as_mut().unwrap()
     };
 
@@ -50,7 +49,7 @@ fn main() -> ! {
     let mut usb = UsbSerial::new(usb_bus);
     let registry = CommandRegistry::new(commands::COMMANDS);
 
-    init_context(usb.take_serial(), watchdog);
+    init_context(watchdog);
     usb.init();
 
     loop {

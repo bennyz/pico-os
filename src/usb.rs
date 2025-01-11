@@ -1,7 +1,4 @@
 use crate::commands::{CommandRegistry, CommandResult};
-use fugit::MicrosDurationU32;
-use hal::rom_data::reset_to_usb_boot;
-use hal::Watchdog;
 use heapless::String;
 use rp_pico::hal;
 use usb_device::class_prelude::*;
@@ -40,12 +37,6 @@ impl UsbSerial {
         }
     }
 
-    pub fn take_serial(&mut self) -> SerialPort<'static, hal::usb::UsbBus> {
-        core::mem::replace(&mut self.serial, unsafe {
-            core::mem::MaybeUninit::uninit().assume_init()
-        })
-    }
-
     pub fn init(&mut self) {
         let _ = self.serial.write(b"\r\n=== USB Serial Example ===\r\n");
         let _ = self
@@ -78,7 +69,7 @@ impl UsbSerial {
 
     fn handle_line(&mut self, registry: &CommandRegistry) {
         if !self.line_buffer.is_empty() {
-            match registry.execute(&self.line_buffer) {
+            match registry.execute(&self.line_buffer, &mut self.serial) {
                 CommandResult::Ok(Some(data)) => {
                     let _ = self.serial.write(b"\r\n");
                     let _ = self.serial.write(data);

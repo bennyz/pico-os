@@ -7,6 +7,7 @@ use fugit::MicrosDurationU32;
 use hal::rom_data::reset_to_usb_boot;
 use heapless::String;
 use rp_pico::hal;
+use usbd_serial::SerialPort;
 
 pub struct WriteCommand;
 pub struct ReadCommand;
@@ -32,9 +33,13 @@ impl Command for HelpCommand {
         Ok(CommandArgs::None(()))
     }
 
-    fn execute(&self, _: Self::Args, context: &Context) -> CommandResult {
-        let mut serial = context.serial.borrow_mut();
-
+    fn execute(
+        &self,
+        _: Self::Args,
+        _: &Context,
+        serial: &mut SerialPort<'static, hal::usb::UsbBus>,
+    ) -> CommandResult {
+        let _ = serial.write(b"\r\nAvailable commands:\r\n");
         for cmd in COMMANDS {
             let _ = serial.write(b"  ");
             let _ = serial.write(cmd.name().as_bytes());
@@ -70,7 +75,12 @@ impl Command for RebootCommand {
         Ok(CommandArgs::None(()))
     }
 
-    fn execute(&self, _: Self::Args, context: &Context) -> CommandResult {
+    fn execute(
+        &self,
+        _: Self::Args,
+        context: &Context,
+        _: &mut SerialPort<'static, hal::usb::UsbBus>,
+    ) -> CommandResult {
         context
             .watchdog
             .borrow_mut()
@@ -96,7 +106,12 @@ impl Command for BootloaderCommand {
         Ok(CommandArgs::None(()))
     }
 
-    fn execute(&self, _: Self::Args, _context: &Context) -> CommandResult {
+    fn execute(
+        &self,
+        _: Self::Args,
+        _context: &Context,
+        _: &mut SerialPort<'static, hal::usb::UsbBus>,
+    ) -> CommandResult {
         reset_to_usb_boot(0, 0);
         CommandResult::Ok(None)
     }
@@ -128,7 +143,12 @@ impl Command for ReadCommand {
         Ok(CommandArgs::Slot(slot))
     }
 
-    fn execute(&self, args: Self::Args, _context: &Context) -> CommandResult {
+    fn execute(
+        &self,
+        args: Self::Args,
+        _context: &Context,
+        _: &mut SerialPort<'static, hal::usb::UsbBus>,
+    ) -> CommandResult {
         let slot = match args {
             CommandArgs::Slot(slot) => slot,
             _ => return CommandResult::Error("Invalid arguments"),
@@ -184,7 +204,12 @@ impl Command for WriteCommand {
         Ok(CommandArgs::WriteSlot(slot, data))
     }
 
-    fn execute(&self, args: Self::Args, _context: &Context) -> CommandResult {
+    fn execute(
+        &self,
+        args: Self::Args,
+        _context: &Context,
+        _: &mut SerialPort<'static, hal::usb::UsbBus>,
+    ) -> CommandResult {
         let (slot, data) = match args {
             CommandArgs::WriteSlot(slot, data) => (slot, data),
             _ => return CommandResult::Error("Invalid arguments"),
@@ -213,7 +238,12 @@ impl Command for SlotsCommand {
         Ok(CommandArgs::None(()))
     }
 
-    fn execute(&self, _: Self::Args, _: &Context) -> CommandResult {
+    fn execute(
+        &self,
+        _: Self::Args,
+        _: &Context,
+        _: &mut SerialPort<'static, hal::usb::UsbBus>,
+    ) -> CommandResult {
         let output = unsafe {
             write_to_buffer(&mut SLOTS_BUFFER, |writer| {
                 for (i, (_, name)) in flash::FLASH_SLOTS.iter().enumerate() {
@@ -247,7 +277,7 @@ impl<'a> ByteWriter<'a> {
     }
 }
 
-impl<'a> core::fmt::Write for ByteWriter<'a> {
+impl core::fmt::Write for ByteWriter<'_> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         let bytes = s.as_bytes();
         let remaining_buf = &mut self.buffer[self.position..];
@@ -261,13 +291,10 @@ impl<'a> core::fmt::Write for ByteWriter<'a> {
 }
 
 fn write_to_buffer(buffer: &'static mut [u8], f: impl FnOnce(&mut ByteWriter)) -> &'static [u8] {
-    let mut writer = ByteWriter {
-        buffer,
-        position: 0,
-    };
+    let mut writer = ByteWriter::new(buffer);
     f(&mut writer);
 
-    let position = writer.position;
+    let position = writer.position();
     drop(writer);
 
     &buffer[..position]
