@@ -8,7 +8,6 @@ mod usb;
 
 use crate::commands::CommandRegistry;
 
-use cortex_m::asm::delay;
 use panic_halt as _;
 use rp_pico::hal::{pac, Watchdog};
 use rp_pico::{entry, hal};
