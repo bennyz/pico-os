@@ -3,6 +3,7 @@ use crate::commands::{CommandResult, COMMANDS};
 use crate::context::Context;
 use crate::flash;
 use core::fmt::Write;
+use embedded_hal::digital::OutputPin;
 use fugit::MicrosDurationU32;
 use hal::rom_data::reset_to_usb_boot;
 use heapless::String;
@@ -15,6 +16,63 @@ pub struct SlotsCommand;
 pub struct HelpCommand;
 pub struct RebootCommand;
 pub struct BootloaderCommand;
+pub struct LedCommand;
+
+impl Command for LedCommand {
+    type Args = CommandArgs;
+
+    fn name(&self) -> &'static str {
+        "led"
+    }
+    fn help(&self) -> &'static str {
+        "Control the onboard LED: led <on|off|blink>"
+    }
+
+    fn parse(&self, args: &[&str]) -> Result<Self::Args, &'static str> {
+        if args.len() != 1 {
+            return Err("Usage: led <on|off|blink>");
+        }
+
+        match args[0] {
+            "on" => Ok(CommandArgs::Led("on")),
+            "off" => Ok(CommandArgs::Led("off")),
+            "blink" => Ok(CommandArgs::Led("blink")),
+            _ => Err("Invalid LED command. Use 'on', 'off', or 'blink'"),
+        }
+    }
+
+    fn execute(
+        &self,
+        args: Self::Args,
+        context: &Context,
+        _: &mut SerialPort<'static, hal::usb::UsbBus>,
+    ) -> CommandResult {
+        let command = match args {
+            CommandArgs::Led(cmd) => cmd,
+            _ => return CommandResult::Error("Invalid arguments"),
+        };
+
+        let mut led = context.led.borrow_mut();
+        let mut delay = context.delay.borrow_mut();
+
+        match command {
+            "on" => led.set_high().unwrap(),
+            "off" => led.set_low().unwrap(),
+            "blink" => {
+                led.set_high().unwrap();
+                delay.delay_ms(500);
+                led.set_low().unwrap();
+                delay.delay_ms(500);
+                led.set_high().unwrap();
+                delay.delay_ms(500);
+                led.set_low().unwrap();
+            }
+            _ => return CommandResult::Error("Invalid LED command"),
+        }
+
+        CommandResult::Ok(None)
+    }
+}
 
 impl Command for HelpCommand {
     type Args = CommandArgs;

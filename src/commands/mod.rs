@@ -13,6 +13,7 @@ pub enum CommandArgs {
     None(()),
     Slot(usize),
     WriteSlot(usize, String<64>),
+    Led(&'static str),
 }
 
 pub trait Command: Send + Sync {
@@ -35,6 +36,7 @@ pub static COMMANDS: &[&dyn Command<Args = CommandArgs>] = &[
     &HelpCommand,
     &RebootCommand,
     &BootloaderCommand,
+    &LedCommand,
 ];
 
 pub enum CommandResult {
