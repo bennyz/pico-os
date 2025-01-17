@@ -8,9 +8,8 @@ mod usb;
 
 use crate::commands::CommandRegistry;
 
-use embedded_hal::digital::OutputPin;
 use panic_halt as _;
-use rp_pico::hal::{pac, Clock, Watchdog};
+use rp_pico::hal::{pac, Adc, Clock, Watchdog};
 use rp_pico::{entry, hal};
 use usb::UsbSerial;
 use usb_device::class_prelude::UsbBusAllocator;
@@ -21,6 +20,7 @@ use context::init as init_context;
 fn main() -> ! {
     let mut pac = pac::Peripherals::take().unwrap();
     let core = pac::CorePeripherals::take().unwrap();
+    let adc = Adc::new(pac.ADC, &mut pac.RESETS);
 
     static mut WATCHDOG: Option<Watchdog> = None;
     let watchdog = unsafe {
@@ -62,7 +62,7 @@ fn main() -> ! {
     let mut usb = UsbSerial::new(usb_bus);
     let registry = CommandRegistry::new(commands::COMMANDS);
 
-    init_context(watchdog, led_pin, delay);
+    init_context(watchdog, led_pin, delay, adc);
     usb.init();
 
     loop {

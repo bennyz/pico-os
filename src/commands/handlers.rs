@@ -17,6 +17,53 @@ pub struct HelpCommand;
 pub struct RebootCommand;
 pub struct BootloaderCommand;
 pub struct LedCommand;
+pub struct TempCommand;
+
+impl Command for TempCommand {
+    type Args = CommandArgs;
+
+    fn name(&self) -> &'static str {
+        "temp"
+    }
+    fn help(&self) -> &'static str {
+        "Read the internal temperature sensor"
+    }
+
+    fn parse(&self, args: &[&str]) -> Result<Self::Args, &'static str> {
+        if !args.is_empty() {
+            return Err("temp command takes no arguments");
+        }
+        Ok(CommandArgs::None(()))
+    }
+
+    fn execute(
+        &self,
+        _: Self::Args,
+        context: &Context,
+        _: &mut SerialPort<'static, hal::usb::UsbBus>,
+    ) -> CommandResult {
+        let mut adc = context.adc.borrow_mut();
+
+        let mut temp_sensor = match adc.take_temp_sensor() {
+            Some(sensor) => sensor,
+            None => return CommandResult::Error("Failed to access temperature sensor"),
+        };
+
+        let adc_value: u16 =
+            embedded_hal_0_2::adc::OneShot::read(&mut *adc, &mut temp_sensor).unwrap();
+
+        // Convert ADC reading to temperature
+        let temp_celsius = 27.0 - (adc_value as f32 - 0.706) / 0.001721;
+
+        unsafe {
+            write_to_buffer(&mut SLOTS_BUFFER, |writer| {
+                let _ = write!(writer, "\r\nTemperature: {:.1}°C", temp_celsius);
+            })
+        };
+
+        CommandResult::Ok(Some(unsafe { &SLOTS_BUFFER[..] }))
+    }
+}
 
 impl Command for LedCommand {
     type Args = CommandArgs;

@@ -22,7 +22,9 @@ cortex-m = "0.7.7"
 rp2040-flash = "0.5.1"
 numtoa = "0.2.4"
 embedded-hal = "1.0.0"
-
+embedded-hal-0-2 = { package = "embedded-hal", version = "0.2.7", features = [
+    "unproven",
+] }
 [features]
 # This is the set of features we enable by default
 default = ["boot2", "rt", "critical-section-impl", "rom-func-cache"]
