@@ -41,7 +41,8 @@ fn main() -> ! {
 
     let delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().to_Hz());
 
-    let adc = Adc::new(pac.ADC, &mut pac.RESETS);
+    let mut adc = Adc::new(pac.ADC, &mut pac.RESETS);
+    let temp_sense = adc.take_temp_sensor().unwrap();
 
     let sio = hal::Sio::new(pac.SIO);
     let pins = rp_pico::Pins::new(
@@ -63,7 +64,7 @@ fn main() -> ! {
     let mut usb = UsbSerial::new(usb_bus);
     let registry = CommandRegistry::new(commands::COMMANDS);
 
-    init_context(watchdog, led_pin, delay, adc);
+    init_context(watchdog, led_pin, delay, adc, temp_sense);
     usb.init();
 
     loop {
