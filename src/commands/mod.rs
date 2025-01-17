@@ -37,6 +37,7 @@ pub static COMMANDS: &[&dyn Command<Args = CommandArgs>] = &[
     &RebootCommand,
     &BootloaderCommand,
     &LedCommand,
+    &TempCommand,
 ];
 
 pub enum CommandResult {

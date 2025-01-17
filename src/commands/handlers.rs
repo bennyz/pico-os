@@ -43,17 +43,16 @@ impl Command for TempCommand {
         _: &mut SerialPort<'static, hal::usb::UsbBus>,
     ) -> CommandResult {
         let mut adc = context.adc.borrow_mut();
-
-        let mut temp_sensor = match adc.take_temp_sensor() {
+        let mut temp_sense = match adc.take_temp_sensor() {
             Some(sensor) => sensor,
-            None => return CommandResult::Error("Failed to access temperature sensor"),
+            None => return CommandResult::Error("Failed to take temperature sensor"),
         };
 
         let adc_value: u16 =
-            embedded_hal_0_2::adc::OneShot::read(&mut *adc, &mut temp_sensor).unwrap();
+            embedded_hal_0_2::adc::OneShot::read(&mut *adc, &mut temp_sense).unwrap();
 
-        // Convert ADC reading to temperature
-        let temp_celsius = 27.0 - (adc_value as f32 - 0.706) / 0.001721;
+        let vbe = adc_value as f32 * 3.3 / 4096.0;
+        let temp_celsius = 27.0 - (vbe - 0.706) / 0.001721;
 
         unsafe {
             write_to_buffer(&mut SLOTS_BUFFER, |writer| {

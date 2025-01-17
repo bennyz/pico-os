@@ -20,7 +20,6 @@ use context::init as init_context;
 fn main() -> ! {
     let mut pac = pac::Peripherals::take().unwrap();
     let core = pac::CorePeripherals::take().unwrap();
-    let adc = Adc::new(pac.ADC, &mut pac.RESETS);
 
     static mut WATCHDOG: Option<Watchdog> = None;
     let watchdog = unsafe {
@@ -41,6 +40,8 @@ fn main() -> ! {
     .unwrap();
 
     let delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().to_Hz());
+
+    let adc = Adc::new(pac.ADC, &mut pac.RESETS);
 
     let sio = hal::Sio::new(pac.SIO);
     let pins = rp_pico::Pins::new(
