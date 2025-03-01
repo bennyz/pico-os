@@ -1,104 +1,45 @@
-use crate::commands::{CommandRegistry, CommandResult};
-use heapless::String;
-use rp_pico::hal;
-use usb_device::class_prelude::*;
-use usb_device::prelude::*;
-use usbd_serial::SerialPort;
+use embassy_rp::bind_interrupts;
+use embassy_rp::peripherals::USB;
+use embassy_rp::usb::{Driver, InterruptHandler};
+use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
+use embassy_usb::{Builder, Config};
 
-pub struct UsbSerial {
-    serial: SerialPort<'static, hal::usb::UsbBus>,
-    device: UsbDevice<'static, hal::usb::UsbBus>,
-    line_buffer: String<64>,
-}
+// Bind USB interrupts
+bind_interrupts!(struct Irqs {
+    USBCTRL_IRQ => InterruptHandler<USB>;
+});
 
-static mut USB_BUS: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
+/// Initializes the USB CDC ACM (serial) device
+pub fn setup_usb<'d>(
+    usb_peripheral: USB,
+    state: &'d mut State<'d>,
+    config_desc: &'d mut [u8; 256],
+    bos_desc: &'d mut [u8; 256],
+    control_buf: &'d mut [u8; 64],
+) -> (
+    Builder<'d, Driver<'d, USB>>,
+    CdcAcmClass<'d, Driver<'d, USB>>,
+) {
+    let driver = Driver::new(usb_peripheral, Irqs);
 
-impl UsbSerial {
-    pub fn new(usb_bus: UsbBusAllocator<hal::usb::UsbBus>) -> Self {
-        unsafe {
-            USB_BUS = Some(usb_bus);
-            let bus_ref = USB_BUS.as_ref().unwrap();
+    // Configure USB device
+    let mut config = Config::new(0xc0de, 0xcafe);
+    config.manufacturer = Some("Pico OS");
+    config.product = Some("USB Serial");
+    config.serial_number = Some("123456");
 
-            let serial = SerialPort::new(bus_ref);
-            let device = UsbDeviceBuilder::new(bus_ref, UsbVidPid(0x2E8A, 0x000A))
-                .strings(&[StringDescriptors::default()
-                    .manufacturer("RPI")
-                    .product("Pico OS")
-                    .serial_number("TEST")])
-                .unwrap()
-                .device_class(2)
-                .build();
+    // Create USB builder
+    let mut builder = Builder::new(
+        driver,
+        config,
+        config_desc,
+        bos_desc,
+        &mut [],
+        control_buf,
+    );
 
-            Self {
-                serial,
-                device,
-                line_buffer: String::new(),
-            }
-        }
-    }
+    // Create CDC ACM class
+    let class = CdcAcmClass::new(&mut builder, state, 64);
 
-    pub fn init(&mut self) {
-        let _ = self.serial.write(b"\r\n=== USB Serial Example ===\r\n");
-        let _ = self
-            .serial
-            .write(b"Type 'help' for available commands.\r\n> ");
-    }
-
-    pub fn poll(&mut self, registry: &CommandRegistry) {
-        if self.device.poll(&mut [&mut self.serial]) {
-            let mut buf = [0u8; 64];
-            match self.serial.read(&mut buf) {
-                Ok(count) if count > 0 => {
-                    self.handle_input(&buf[..count], registry);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    fn handle_input(&mut self, input: &[u8], registry: &CommandRegistry) {
-        for &b in input {
-            match b {
-                b'\r' | b'\n' => self.handle_line(registry),
-                8 | 127 => self.handle_backspace(),
-                b if (32..127).contains(&b) => self.handle_char(b),
-                _ => {}
-            }
-        }
-    }
-
-    fn handle_line(&mut self, registry: &CommandRegistry) {
-        if !self.line_buffer.is_empty() {
-            match registry.execute(&self.line_buffer, &mut self.serial) {
-                CommandResult::Ok(Some(data)) => {
-                    let _ = self.serial.write(b"\r\n");
-                    let _ = self.serial.write(data);
-                }
-                CommandResult::Ok(None) => {
-                    let _ = self.serial.write(b"\r\nOK");
-                }
-                CommandResult::Error(e) => {
-                    let _ = self.serial.write(b"\r\nError: ");
-                    let _ = self.serial.write(e.as_bytes());
-                }
-            }
-            let _ = self.serial.write(b"\r\n> ");
-            self.line_buffer.clear();
-        } else {
-            let _ = self.serial.write(b"\r\n> ");
-        }
-    }
-
-    fn handle_backspace(&mut self) {
-        if !self.line_buffer.is_empty() {
-            self.line_buffer.pop();
-            let _ = self.serial.write(b"\x08 \x08");
-        }
-    }
-
-    fn handle_char(&mut self, b: u8) {
-        if self.line_buffer.push(b as char).is_ok() {
-            let _ = self.serial.write(&[b]);
-        }
-    }
+    (builder, class)
 }

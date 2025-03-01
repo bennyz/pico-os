@@ -1,73 +1,71 @@
 #![no_std]
 #![no_main]
 
-mod commands;
-mod context;
-mod flash;
-mod usb;
+use defmt::*;
+use embassy_executor::Spawner;
+use embassy_futures::join::join;
+use embassy_rp::block::ImageDef;
+use embassy_time::{Duration, Timer};
+use pico_os_embassy::{info, usb, shell::Shell};
+use {defmt_rtt as _, panic_probe as _};
 
-use crate::commands::CommandRegistry;
+#[unsafe(link_section = ".start_block")]
+#[used]
+pub static IMAGE_DEF: ImageDef = ImageDef::secure_exe();
 
-use panic_halt as _;
-use rp_pico::hal::{pac, Adc, Clock, Watchdog};
-use rp_pico::{entry, hal};
-use usb::UsbSerial;
-use usb_device::class_prelude::UsbBusAllocator;
+#[unsafe(link_section = ".bi_entries")]
+#[used]
+pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
+    embassy_rp::binary_info::rp_program_name!(c"Pico OS"),
+    embassy_rp::binary_info::rp_program_description!(c"Pico OS"),
+    embassy_rp::binary_info::rp_cargo_version!(),
+    embassy_rp::binary_info::rp_program_build_attribute!(),
+];
 
-use context::init as init_context;
+#[embassy_executor::main]
+async fn main(_spawner: Spawner) {
+    let p = embassy_rp::init(Default::default());
 
-#[entry]
-fn main() -> ! {
-    let mut pac = pac::Peripherals::take().unwrap();
-    let core = pac::CorePeripherals::take().unwrap();
+    info!("Pico OS starting...");
+    Timer::after(Duration::from_millis(1000)).await;
+    
+    // Initialize USB and CDC-ACM class
+    let mut state = embassy_usb::class::cdc_acm::State::new();
+    let mut config_descriptor = [0; 256];
+    let mut bos_descriptor = [0; 256];
+    let mut control_buf = [0; 64];
+    
+    let (builder, mut class) = usb::setup_usb(
+        p.USB, 
+        &mut state,
+        &mut config_descriptor,
+        &mut bos_descriptor,
+        &mut control_buf,
+    );
+    
+    let mut usb = builder.build();
+    info!("USB device initialized");
 
-    static mut WATCHDOG: Option<Watchdog> = None;
-    let watchdog = unsafe {
-        WATCHDOG = Some(hal::Watchdog::new(pac.WATCHDOG));
-        WATCHDOG.as_mut().unwrap()
+    // Create a shell instance
+    let mut shell = Shell::new(&mut class);
+
+    // Run USB device and shell tasks
+    let usb_fut = usb.run();
+    let shell_fut = async {
+        loop {
+            match shell.run().await {
+                Ok(()) => {
+                    info!("Shell exited normally");
+                },
+                Err(e) => {
+                    warn!("Shell disconnected: {}", e);
+                    // Wait before reconnecting
+                    Timer::after(Duration::from_millis(1000)).await;
+                }
+            }
+        }
     };
 
-    let clocks = hal::clocks::init_clocks_and_plls(
-        rp_pico::XOSC_CRYSTAL_FREQ,
-        pac.XOSC,
-        pac.CLOCKS,
-        pac.PLL_SYS,
-        pac.PLL_USB,
-        &mut pac.RESETS,
-        watchdog,
-    )
-    .ok()
-    .unwrap();
-
-    let delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().to_Hz());
-
-    let mut adc = Adc::new(pac.ADC, &mut pac.RESETS);
-    let temp_sense = adc.take_temp_sensor().unwrap();
-
-    let sio = hal::Sio::new(pac.SIO);
-    let pins = rp_pico::Pins::new(
-        pac.IO_BANK0,
-        pac.PADS_BANK0,
-        sio.gpio_bank0,
-        &mut pac.RESETS,
-    );
-    let led_pin = pins.led.into_push_pull_output();
-
-    let usb_bus = UsbBusAllocator::new(hal::usb::UsbBus::new(
-        pac.USBCTRL_REGS,
-        pac.USBCTRL_DPRAM,
-        clocks.usb_clock,
-        true,
-        &mut pac.RESETS,
-    ));
-
-    let mut usb = UsbSerial::new(usb_bus);
-    let registry = CommandRegistry::new(commands::COMMANDS);
-
-    init_context(watchdog, led_pin, delay, adc, temp_sense);
-    usb.init();
-
-    loop {
-        usb.poll(&registry);
-    }
+    // Run both tasks concurrently
+    join(usb_fut, shell_fut).await;
 }

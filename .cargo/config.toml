@@ -1,13 +1,11 @@
-[build]
-target = "thumbv6m-none-eabi"
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+#runner = "probe-rs run --chip RP2040"
+#runner = "elf2uf2-rs -d"
+#runner = "picotool load -u -v -x -t elf"
+runner = "probe-rs run --chip RP235x"
 
-[target.thumbv6m-none-eabi]
-runner = "elf2uf2-rs -d"
-rustflags = [
-    "-C",
-    "link-arg=--nmagic",
-    "-C",
-    "link-arg=-Tlink.x",
-    "-C",
-    "no-vectorize-loops",
-]
+[build]
+target = "thumbv8m.main-none-eabihf"
+
+[env]
+DEFMT_LOG = "debug"
